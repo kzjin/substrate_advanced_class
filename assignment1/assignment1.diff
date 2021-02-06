@@ -1,0 +1,466 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 559a9e3..993af05 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3278,6 +3278,7 @@ dependencies = [
+  "pallet-aura",
+  "pallet-balances",
+  "pallet-grandpa",
++ "pallet-poe",
+  "pallet-randomness-collective-flip",
+  "pallet-sudo",
+  "pallet-template",
+@@ -3539,6 +3540,19 @@ dependencies = [
+ ]
+ 
+ [[package]]
++name = "pallet-poe"
++version = "2.0.0"
++dependencies = [
++ "frame-support",
++ "frame-system",
++ "parity-scale-codec",
++ "sp-core",
++ "sp-io",
++ "sp-runtime",
++ "sp-std",
++]
++
++[[package]]
+ name = "pallet-randomness-collective-flip"
+ version = "2.0.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+diff --git a/pallets/poe/Cargo.toml b/pallets/poe/Cargo.toml
+new file mode 100644
+index 0000000..f9e577e
+--- /dev/null
++++ b/pallets/poe/Cargo.toml
+@@ -0,0 +1,38 @@
++[package]
++authors = ['Substrate DevHub <https://github.com/substrate-developer-hub>']
++description = 'FRAME pallet template for defining proof of existence.'
++edition = '2018'
++homepage = 'https://substrate.dev'
++license = 'Unlicense'
++name = 'pallet-poe'
++repository = 'https://github.com/substrate-developer-hub/substrate-node-template/'
++version = '2.0.0'
++
++[package.metadata.docs.rs]
++targets = ['x86_64-unknown-linux-gnu']
++
++# alias "parity-scale-code" to "codec"
++[dependencies.codec]
++default-features = false
++features = ['derive']
++package = 'parity-scale-codec'
++version = '1.3.4'
++
++[dependencies]
++frame-support = { default-features = false, version = '2.0.0' }
++frame-system = { default-features = false, version = '2.0.0' }
++sp-std = { default-features = false, version = '2.0.0' }
++
++[dev-dependencies]
++sp-core = { default-features = false, version = '2.0.0' }
++sp-io = { default-features = false, version = '2.0.0' }
++sp-runtime = { default-features = false, version = '2.0.0' }
++
++[features]
++default = ['std']
++std = [
++    'codec/std',
++    'frame-support/std',
++    'frame-system/std',
++    'sp-std/std',
++]
+diff --git a/pallets/poe/src/lib.rs b/pallets/poe/src/lib.rs
+new file mode 100644
+index 0000000..90332be
+--- /dev/null
++++ b/pallets/poe/src/lib.rs
+@@ -0,0 +1,155 @@
++#![cfg_attr(not(feature = "std"), no_std)]
++
++use frame_support::{
++    decl_module, decl_storage, decl_event, decl_error, ensure, StorageMap, dispatch, traits::Get
++};
++use frame_system::ensure_signed;
++use sp_std::vec::Vec;
++
++#[cfg(test)]
++mod mock;
++
++#[cfg(test)]
++mod tests;
++
++/// Configure the pallet by specifying the parameters and types on which it depends.
++pub trait Trait: frame_system::Trait {
++    /// Because this pallet emits events, it depends on the runtime's definition of an event.
++    type Event: From<Event<Self>> + Into<<Self as frame_system::Trait>::Event>;
++    type ProofMaxLen: Get<u16>;
++}
++
++// The pallet's runtime storage items.
++// https://substrate.dev/docs/en/knowledgebase/runtime/storage
++decl_storage! {
++    trait Store for Module<T: Trait> as TemplateModule {
++        /// The storage item for our proofs.
++        /// It maps a proof to the user who made the claim and when they made it.
++        Proofs get(fn proofs): map hasher(blake2_128_concat) Vec<u8> => (T::AccountId, T::BlockNumber);
++    }
++}
++
++// Pallets use events to inform users when important changes are made.
++// Event documentation should end with an array that provides descriptive names for parameters.
++// https://substrate.dev/docs/en/knowledgebase/runtime/events
++decl_event! {
++    pub enum Event<T> where AccountId = <T as frame_system::Trait>::AccountId {
++        /// Event emitted when a proof has been claimed. [who, claim]
++        ClaimCreated(AccountId, Vec<u8>),
++        /// Event emitted when a claim is revoked by the owner. [who, claim]
++        ClaimRevoked(AccountId, Vec<u8>),
++        /// Event emitted when a claim is transferred by the owner. [who, claim, new_owner]
++        ClaimTransferred(AccountId, Vec<u8>, AccountId),
++    }
++}
++
++// Errors inform users that something went wrong.
++decl_error! {
++    pub enum Error for Module<T: Trait> {
++        /// The proof has already been claimed.
++        ProofAlreadyClaimed,
++        /// The proof does not exist, so it cannot be revoked.
++        NoSuchProof,
++        /// The proof is claimed by another account, so caller can't revoke it.
++        NotProofOwner,
++        /// The proof length is too long
++        ProofTooLong,
++    }
++}
++
++// Dispatchable functions allows users to interact with the pallet and invoke state changes.
++// These functions materialize as "extrinsics", which are often compared to transactions.
++// Dispatchable functions must be annotated with a weight and must return a DispatchResult.
++decl_module! {
++    pub struct Module<T: Trait> for enum Call where origin: T::Origin {
++        // Errors must be initialized if they are used by the pallet.
++        type Error = Error<T>;
++
++        // Events must be initialized if they are used by the pallet.
++        fn deposit_event() = default;
++
++        /// Allow a user to claim ownership of an unclaimed proof.
++        #[weight = 10_000]
++        fn create_claim(origin, proof: Vec<u8>) -> dispatch::DispatchResult {
++            // Check that the extrinsic was signed and get the signer.
++            // This function will return an error if the extrinsic is not signed.
++            // https://substrate.dev/docs/en/knowledgebase/runtime/origin
++            let sender = ensure_signed(origin)?;
++
++            // Verify that the specified proof has not already been claimed.
++            ensure!(!Proofs::<T>::contains_key(&proof), Error::<T>::ProofAlreadyClaimed);
++
++            // Verify the length of proof is valid
++            ensure!(proof.len() <= T::ProofMaxLen::get() as usize, Error::<T>::ProofTooLong);
++
++            // Get the block number from the FRAME System module.
++            let current_block = <frame_system::Module<T>>::block_number();
++
++            // Store the proof with the sender and block number.
++            Proofs::<T>::insert(&proof, (&sender, current_block));
++
++            // Emit an event that the claim was created.
++            Self::deposit_event(RawEvent::ClaimCreated(sender, proof));
++
++            Ok(())
++        }
++
++        /// Allow the owner to revoke their claim.
++        #[weight = 10_000]
++        fn revoke_claim(origin, proof: Vec<u8>) -> dispatch::DispatchResult {
++            // Check that the extrinsic was signed and get the signer.
++            // This function will return an error if the extrinsic is not signed.
++            // https://substrate.dev/docs/en/knowledgebase/runtime/origin
++            let sender = ensure_signed(origin)?;
++
++            // Verify that the specified proof has been claimed.
++            ensure!(Proofs::<T>::contains_key(&proof), Error::<T>::NoSuchProof);
++
++            // Get owner of the claim.
++            let (owner, _) = Proofs::<T>::get(&proof);
++
++            // Verify that sender of the current call is the claim owner.
++            ensure!(sender == owner, Error::<T>::NotProofOwner);
++
++            // Remove claim from storage.
++            Proofs::<T>::remove(&proof);
++
++            // Emit an event that the claim was erased.
++            Self::deposit_event(RawEvent::ClaimRevoked(sender, proof));
++
++            Ok(())
++        }
++
++        /// Allow the owner to transfer their claim.
++        #[weight = 10_000]
++        fn transfer_claim(origin, proof: Vec<u8>, new_owner: T::AccountId) -> dispatch::DispatchResult {
++            // Check that the extrinsic was signed and get the signer.
++            // This function will return an error if the extrinsic is not signed.
++            // https://substrate.dev/docs/en/knowledgebase/runtime/origin
++            let sender = ensure_signed(origin)?;
++
++            // Verify that the specified proof has been claimed.
++            ensure!(Proofs::<T>::contains_key(&proof), Error::<T>::NoSuchProof);
++
++            // Get owner of the claim.
++            let (owner, _) = Proofs::<T>::get(&proof);
++
++            // Verify that sender of the current call is the claim owner.
++            ensure!(sender == owner, Error::<T>::NotProofOwner);
++
++            // Remove claim from storage.
++            Proofs::<T>::remove(&proof);
++
++            // Get the block number from the FRAME System module.
++            let current_block = <frame_system::Module<T>>::block_number();
++
++            // Store the proof with the sender and block number.
++            Proofs::<T>::insert(&proof, (&new_owner, current_block));
++
++            // Emit an event that the claim was created.
++            Self::deposit_event(RawEvent::ClaimTransferred(sender, proof, new_owner));
++
++            Ok(())
++        }
++    }
++}
+diff --git a/pallets/poe/src/mock.rs b/pallets/poe/src/mock.rs
+new file mode 100644
+index 0000000..b6556ea
+--- /dev/null
++++ b/pallets/poe/src/mock.rs
+@@ -0,0 +1,66 @@
++use crate::{Module, Trait};
++use sp_core::H256;
++use frame_support::{impl_outer_origin, parameter_types, weights::Weight};
++use sp_runtime::{
++	traits::{BlakeTwo256, IdentityLookup}, testing::Header, Perbill,
++};
++use frame_system as system;
++
++impl_outer_origin! {
++	pub enum Origin for Test {}
++}
++
++// Configure a mock runtime to test the pallet.
++
++#[derive(Clone, Eq, PartialEq)]
++pub struct Test;
++parameter_types! {
++	pub const BlockHashCount: u64 = 250;
++	pub const MaximumBlockWeight: Weight = 1024;
++	pub const MaximumBlockLength: u32 = 2 * 1024;
++	pub const AvailableBlockRatio: Perbill = Perbill::from_percent(75);
++}
++
++impl system::Trait for Test {
++	type BaseCallFilter = ();
++	type Origin = Origin;
++	type Call = ();
++	type Index = u64;
++	type BlockNumber = u64;
++	type Hash = H256;
++	type Hashing = BlakeTwo256;
++	type AccountId = u64;
++	type Lookup = IdentityLookup<Self::AccountId>;
++	type Header = Header;
++	type Event = ();
++	type BlockHashCount = BlockHashCount;
++	type MaximumBlockWeight = MaximumBlockWeight;
++	type DbWeight = ();
++	type BlockExecutionWeight = ();
++	type ExtrinsicBaseWeight = ();
++	type MaximumExtrinsicWeight = MaximumBlockWeight;
++	type MaximumBlockLength = MaximumBlockLength;
++	type AvailableBlockRatio = AvailableBlockRatio;
++	type Version = ();
++	type PalletInfo = ();
++	type AccountData = ();
++	type OnNewAccount = ();
++	type OnKilledAccount = ();
++	type SystemWeightInfo = ();
++}
++
++impl Trait for Test {
++	type Event = ();
++	type ProofMaxLen = ProofMaxLen;
++}
++
++parameter_types! {
++	pub const ProofMaxLen: u16 = 512;
++}
++
++pub type PoeModule = Module<Test>;
++
++// Build genesis storage according to the mock runtime.
++pub fn new_test_ext() -> sp_io::TestExternalities {
++	system::GenesisConfig::default().build_storage::<Test>().unwrap().into()
++}
+diff --git a/pallets/poe/src/tests.rs b/pallets/poe/src/tests.rs
+new file mode 100644
+index 0000000..c5b562d
+--- /dev/null
++++ b/pallets/poe/src/tests.rs
+@@ -0,0 +1,102 @@
++use crate::{Error, mock::*};
++use frame_support::{assert_ok, assert_noop};
++
++use super::*;
++
++#[test]
++fn create_claim_works() {
++    new_test_ext().execute_with(|| {
++        let claim: Vec<u8> = vec![0, 2];
++        assert_ok!(PoeModule::create_claim(Origin::signed(1), claim.clone()));
++        assert_eq!(Proofs::<Test>::get(&claim), (1, frame_system::Module::<Test>::block_number()));
++    });
++}
++
++#[test]
++fn create_claim_fails_when_claim_already_exists() {
++    new_test_ext().execute_with(|| {
++        let claim: Vec<u8> = vec![0, 2];
++        assert_ok!(PoeModule::create_claim(Origin::signed(1), claim.clone()));
++
++        assert_noop!(
++            PoeModule::create_claim(Origin::signed(1), claim.clone()),
++            Error::<Test>::ProofAlreadyClaimed
++        );
++    });
++}
++
++#[test]
++fn create_claim_fails_when_proof_is_too_long() {
++    new_test_ext().execute_with(|| {
++        let claim: Vec<u8> = vec![0; 1024];
++        assert_noop!(
++            PoeModule::create_claim(Origin::signed(1), claim.clone()),
++            Error::<Test>::ProofTooLong
++        );
++    });
++}
++
++#[test]
++fn revoke_claim_works() {
++    new_test_ext().execute_with(|| {
++        let claim: Vec<u8> = vec![0, 2];
++        assert_ok!(PoeModule::create_claim(Origin::signed(1), claim.clone()));
++        assert_ok!(PoeModule::revoke_claim(Origin::signed(1), claim.clone()));
++    });
++}
++
++#[test]
++fn revoke_claim_fails_when_claim_does_not_exist() {
++    new_test_ext().execute_with(|| {
++        let claim: Vec<u8> = vec![0, 2];
++        assert_noop!(
++            PoeModule::revoke_claim(Origin::signed(1), claim.clone()),
++            Error::<Test>::NoSuchProof
++        );
++    });
++}
++
++#[test]
++fn revoke_claim_fails_when_request_by_not_owner() {
++    new_test_ext().execute_with(|| {
++        let claim: Vec<u8> = vec![0, 2];
++        assert_ok!(PoeModule::create_claim(Origin::signed(1), claim.clone()));
++        assert_noop!(
++            PoeModule::revoke_claim(Origin::signed(2), claim.clone()),
++            Error::<Test>::NotProofOwner
++        );
++    });
++}
++
++#[test]
++fn transfer_claim_works() {
++    new_test_ext().execute_with(|| {
++        let claim: Vec<u8> = vec![0, 2];
++        assert_ok!(PoeModule::create_claim(Origin::signed(1), claim.clone()));
++        assert_ok!(PoeModule::transfer_claim(Origin::signed(1), claim.clone(), 2));
++        assert_eq!(Proofs::<Test>::get(&claim), (2, frame_system::Module::<Test>::block_number()));
++    });
++}
++
++#[test]
++fn transfer_claim_fails_when_claim_does_not_exist() {
++    new_test_ext().execute_with(|| {
++        let claim: Vec<u8> = vec![0, 2];
++        assert_noop!(
++            PoeModule::transfer_claim(Origin::signed(1), claim.clone(), 2),
++            Error::<Test>::NoSuchProof
++        );
++    });
++}
++
++#[test]
++fn transfer_claim_fails_when_request_by_not_owner() {
++    new_test_ext().execute_with(|| {
++        let claim: Vec<u8> = vec![0, 2];
++        assert_ok!(PoeModule::create_claim(Origin::signed(1), claim.clone()));
++        assert_noop!(
++            PoeModule::transfer_claim(Origin::signed(2), claim.clone(), 3),
++            Error::<Test>::NotProofOwner
++        );
++    });
++}
+diff --git a/runtime/Cargo.toml b/runtime/Cargo.toml
+index 6c546b5..8fc66a5 100644
+--- a/runtime/Cargo.toml
++++ b/runtime/Cargo.toml
+@@ -26,6 +26,7 @@ serde = { features = ['derive'], optional = true, version = '1.0.101' }
+ 
+ # local dependencies
+ pallet-template = { path = '../pallets/template', default-features = false, version = '2.0.0' }
++pallet-poe = { path = '../pallets/poe', default-features = false, version = '2.0.0' }
+ 
+ # Substrate dependencies
+ frame-benchmarking = { default-features = false, optional = true, version = '2.0.0' }
+@@ -79,6 +80,7 @@ std = [
+     'pallet-randomness-collective-flip/std',
+     'pallet-sudo/std',
+     'pallet-template/std',
++    'pallet-poe/std',
+     'pallet-timestamp/std',
+     'pallet-transaction-payment/std',
+     'pallet-transaction-payment-rpc-runtime-api/std',
+diff --git a/runtime/src/lib.rs b/runtime/src/lib.rs
+index 1e84ad7..6d29e0c 100644
+--- a/runtime/src/lib.rs
++++ b/runtime/src/lib.rs
+@@ -266,6 +266,16 @@ impl pallet_template::Trait for Runtime {
+ 	type Event = Event;
+ }
+ 
++/// Configure the template pallet in pallets/template.
++impl pallet_poe::Trait for Runtime {
++	type Event = Event;
++	type ProofMaxLen = ProofMaxLen;
++}
++
++parameter_types! {
++	pub const ProofMaxLen: u16 = 512;
++}
++
+ // Create the runtime by composing the FRAME pallets that were previously configured.
+ construct_runtime!(
+ 	pub enum Runtime where
+@@ -283,6 +293,7 @@ construct_runtime!(
+ 		Sudo: pallet_sudo::{Module, Call, Config<T>, Storage, Event<T>},
+ 		// Include the custom logic from the template pallet in the runtime.
+ 		TemplateModule: pallet_template::{Module, Call, Storage, Event<T>},
++		PoeModule: pallet_poe::{Module, Call, Storage, Event<T>},
+ 	}
+ );
+ 
