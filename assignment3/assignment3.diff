@@ -1,0 +1,9 @@
+frontend/src/KittyCards.js:  const { kitty, accountPair, setStatus } = props;
+frontend/src/KittyCards.js:      <Form.Input fluid label='毛孩 ID' readOnly value={kitty.id}/>
+frontend/src/KittyCards.js:          inputParams: [formValue.target, kitty.id],
+frontend/src/KittyCards.js:    <TransferModal kitty={kitty} accountPair={accountPair} setStatus={setStatus}/> - 来作转让的弹出层
+frontend/src/KittyCards.js:  const { kitty, owner, price, accountPair, setStatus } = props;
+frontend/src/KittyCards.js:  const {dna} = kitty;
+frontend/src/KittyCards.js:        <Card.Header>{kitty.id}</Card.Header>
+frontend/src/KittyCards.js:        <TransferModal kitty={kitty} accountPair={accountPair} setStatus={setStatus}/>
+frontend/src/KittyCards.js:    {kitties.map((kitty, index) => <KittyCard key={index} kitty={kitty} owner={kittyOwners[index]} price={kittyPrices[index]} accountPair={accountPair} setStatus={setStatus}/>)}
