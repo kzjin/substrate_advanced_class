@@ -1,0 +1,153 @@
+diff --git a/pallets/template/Cargo.toml b/pallets/template/Cargo.toml
+index 75d2871..e147ddb 100644
+--- a/pallets/template/Cargo.toml
++++ b/pallets/template/Cargo.toml
+@@ -21,6 +21,8 @@ version = '1.3.4'
+ [dependencies]
+ frame-support = { default-features = false, version = '2.0.1' }
+ frame-system = { default-features = false, version = '2.0.1' }
++frame-benchmarking = { default-features = false, version = '2.0.1', optional = true }
++sp-std = { default-features = false, version = '2.0.1' }
+ 
+ [dev-dependencies]
+ sp-core = { default-features = false, version = '2.0.1' }
+@@ -33,4 +35,7 @@ std = [
+     'codec/std',
+     'frame-support/std',
+     'frame-system/std',
++    'frame-benchmarking/std',
++    'sp-std/std'
+ ]
++runtime-benchmarks = ["frame-benchmarking"]
+\ No newline at end of file
+diff --git a/pallets/template/src/benchmarking.rs b/pallets/template/src/benchmarking.rs
+new file mode 100644
+index 0000000..3f75465
+--- /dev/null
++++ b/pallets/template/src/benchmarking.rs
+@@ -0,0 +1,38 @@
++//! Benchmark-demo pallet benchmarking.
++
++#![cfg(feature = "runtime-benchmarks")]
++
++use super::*;
++
++use frame_benchmarking::{benchmarks, account};
++use frame_system::RawOrigin;
++use sp_std::prelude::*;
++
++benchmarks!{
++	_ {
++		let b in 1 .. 1000 => ();
++	}
++
++	do_something {
++		let b in ...;
++		let caller = account("caller", 0, 0);
++	}: _ (RawOrigin::Signed(caller), b.into())
++	verify {
++		let value = Something::get();
++		assert_eq!(value, b.into());
++	}
++}
++
++#[cfg(test)]
++mod tests {
++	use super::*;
++	use crate::mock::{new_test_ext, Test};
++	use frame_support::assert_ok;
++
++	#[test]
++	fn test_benchmarks() {
++		new_test_ext().execute_with(|| {
++			assert_ok!(test_benchmark_do_something::<Test>());
++		});
++	}
++}
+diff --git a/pallets/template/src/lib.rs b/pallets/template/src/lib.rs
+index 729a712..4f20d94 100644
+--- a/pallets/template/src/lib.rs
++++ b/pallets/template/src/lib.rs
+@@ -13,6 +13,8 @@ mod mock;
+ #[cfg(test)]
+ mod tests;
+ 
++mod benchmarking;
++
+ /// Configure the pallet by specifying the parameters and types on which it depends.
+ pub trait Trait: frame_system::Trait {
+ 	/// Because this pallet emits events, it depends on the runtime's definition of an event.
+@@ -65,7 +67,11 @@ decl_module! {
+ 
+ 		/// An example dispatchable that takes a singles value as a parameter, writes the value to
+ 		/// storage and emits an event. This function must be dispatched by a signed extrinsic.
+-		#[weight = 10_000 + T::DbWeight::get().writes(1)]
++		/// # <weight>
++		/// - Base Weight: 28.75 µs
++		/// - DB Weight: 1 Write
++		/// # </weight>
++		#[weight = 28_750_000 + T::DbWeight::get().writes(1)]
+ 		pub fn do_something(origin, something: u32) -> dispatch::DispatchResult {
+ 			// Check that the extrinsic was signed and get the signer.
+ 			// This function will return an error if the extrinsic is not signed.
+diff --git a/runtime/Cargo.toml b/runtime/Cargo.toml
+index e34ee3e..f5d9ede 100644
+--- a/runtime/Cargo.toml
++++ b/runtime/Cargo.toml
+@@ -26,6 +26,7 @@ serde = { features = ['derive'], optional = true, version = '1.0.119' }
+ 
+ # local dependencies
+ pallet-template = { path = '../pallets/template', default-features = false, version = '2.0.1' }
++pallet-benchmark-demo = { path = '../pallets/benchmark-demo', default-features = false, version = '2.0.1' }
+ 
+ # Substrate dependencies
+ frame-benchmarking = { default-features = false, optional = true, version = '2.0.1' }
+@@ -64,6 +65,8 @@ runtime-benchmarks = [
+     'frame-system/runtime-benchmarks',
+     'pallet-balances/runtime-benchmarks',
+     'pallet-timestamp/runtime-benchmarks',
++    'pallet-benchmark-demo/runtime-benchmarks',
++    'pallet-template/runtime-benchmarks',
+     'sp-runtime/runtime-benchmarks',
+ ]
+ std = [
+@@ -79,6 +82,7 @@ std = [
+     'pallet-randomness-collective-flip/std',
+     'pallet-sudo/std',
+     'pallet-template/std',
++    'pallet-benchmark-demo/std',
+     'pallet-timestamp/std',
+     'pallet-transaction-payment/std',
+     'pallet-transaction-payment-rpc-runtime-api/std',
+diff --git a/runtime/src/lib.rs b/runtime/src/lib.rs
+index 714c0c9..9bc65a7 100644
+--- a/runtime/src/lib.rs
++++ b/runtime/src/lib.rs
+@@ -266,6 +266,10 @@ impl pallet_template::Trait for Runtime {
+ 	type Event = Event;
+ }
+ 
++impl pallet_benchmark_demo::Trait for Runtime {
++	type Event = Event;
++}
++
+ // Create the runtime by composing the FRAME pallets that were previously configured.
+ construct_runtime!(
+ 	pub enum Runtime where
+@@ -283,6 +287,7 @@ construct_runtime!(
+ 		Sudo: pallet_sudo::{Module, Call, Config<T>, Storage, Event<T>},
+ 		// Include the custom logic from the template pallet in the runtime.
+ 		TemplateModule: pallet_template::{Module, Call, Storage, Event<T>},
++		BenchmarkDemoModule: pallet_benchmark_demo::{Module, Call, Storage, Event<T>},
+ 	}
+ );
+ 
+@@ -480,6 +485,8 @@ impl_runtime_apis! {
+ 			add_benchmark!(params, batches, frame_system, SystemBench::<Runtime>);
+ 			add_benchmark!(params, batches, pallet_balances, Balances);
+ 			add_benchmark!(params, batches, pallet_timestamp, Timestamp);
++			add_benchmark!(params, batches, pallet_benchmark_demo, BenchmarkDemoModule);
++			add_benchmark!(params, batches, pallet_template, TemplateModule);
+ 
+ 			if batches.is_empty() { return Err("Benchmark not found for this pallet.".into()) }
+ 			Ok(batches)
