@@ -1,9 +1,177 @@
-frontend/src/KittyCards.js:  const { kitty, accountPair, setStatus } = props;
-frontend/src/KittyCards.js:      <Form.Input fluid label='毛孩 ID' readOnly value={kitty.id}/>
-frontend/src/KittyCards.js:          inputParams: [formValue.target, kitty.id],
-frontend/src/KittyCards.js:    <TransferModal kitty={kitty} accountPair={accountPair} setStatus={setStatus}/> - 来作转让的弹出层
-frontend/src/KittyCards.js:  const { kitty, owner, price, accountPair, setStatus } = props;
-frontend/src/KittyCards.js:  const {dna} = kitty;
-frontend/src/KittyCards.js:        <Card.Header>{kitty.id}</Card.Header>
-frontend/src/KittyCards.js:        <TransferModal kitty={kitty} accountPair={accountPair} setStatus={setStatus}/>
-frontend/src/KittyCards.js:    {kitties.map((kitty, index) => <KittyCard key={index} kitty={kitty} owner={kittyOwners[index]} price={kittyPrices[index]} accountPair={accountPair} setStatus={setStatus}/>)}
+diff --git a/frontend/src/Kitties.js b/frontend/src/Kitties.js
+index e24d14a..74fb759 100644
+--- a/frontend/src/Kitties.js
++++ b/frontend/src/Kitties.js
+@@ -19,14 +19,68 @@ export default function Kitties (props) {
+ 
+   const fetchKittyCnt = () => {
+     /* TODO: 加代码，从 substrate 端读取数据过来 */
++    let unsubscribe = null;
++    api.query.kittiesModule.kittiesCount(count => {
++      setKittyCnt(count.toNumber());
++    }).then(unsub => {
++      unsubscribe = unsub;
++    }).catch(console.error);
++    return () => unsubscribe && unsubscribe();
+   };
+ 
+   const fetchKitties = () => {
+     /* TODO: 加代码，从 substrate 端读取数据过来 */
++    let unsubscribe = null;
++    let indexes = [];
++    for (let i = 0; i < kittyCnt; i++) {
++      indexes.push(i);
++    }
++    api.query.kittiesModule.kitties.multi(indexes, data => {
++      let new_data = data.map((d, i) => {
++        return {
++          dna: d,
++          id: i,
++        }
++      });
++      setKitties(new_data);
++    }).then(unsub => {
++      unsubscribe = unsub;
++    }).catch(console.error);
++    return () => unsubscribe && unsubscribe();
++  };
++
++  const fetchKittyOwners = () => {
++    let unsubscribe = null;
++    let indexes = [];
++    for (let i = 0; i < kittyCnt; i++) {
++      indexes.push(i);
++    }
++    api.query.kittiesModule.kittyOwner.multi(indexes, data => {
++      setKittyOwners(data);
++    }).then(unsub => {
++      unsubscribe = unsub;
++    }).catch(console.error);
++    return () => unsubscribe && unsubscribe();
++  };
++
++  const fetchKittyPrices = () => {
++    let unsubscribe = null;
++    let indexes = [];
++    for (let i = 0; i < kittyCnt; i++) {
++      indexes.push(i);
++    }
++    api.query.kittiesModule.kittyPrices.multi(indexes, data => {
++      setKittyPrices(data);
++    }).then(unsub => {
++      unsubscribe = unsub;
++    }).catch(console.error);
++    return () => unsubscribe && unsubscribe();
+   };
+ 
+   const populateKitties = () => {
+     /* TODO: 加代码，从 substrate 端读取数据过来 */
++    fetchKittyOwners();
++    fetchKittyPrices();
+   };
+ 
+   useEffect(fetchKittyCnt, [api, keyring]);
+@@ -35,7 +89,7 @@ export default function Kitties (props) {
+ 
+   return <Grid.Column width={16}>
+     <h1>小毛孩</h1>
+-    <KittyCards kitties={kitties} accountPair={accountPair} setStatus={setStatus}/>
++    <KittyCards kitties={kitties} kittyOwners={kittyOwners} kittyPrices={kittyPrices} accountPair={accountPair} setStatus={setStatus}/>
+     <Form style={{ margin: '1em 0' }}>
+       <Form.Field style={{ textAlign: 'center' }}>
+         <TxButton
+diff --git a/frontend/src/KittyCards.js b/frontend/src/KittyCards.js
+index 6c756ee..f587862 100644
+--- a/frontend/src/KittyCards.js
++++ b/frontend/src/KittyCards.js
+@@ -5,7 +5,6 @@ import KittyAvatar from './KittyAvatar';
+ import { TxButton } from './substrate-lib/components';
+ 
+ // --- About Modal ---
+-
+ const TransferModal = props => {
+   const { kitty, accountPair, setStatus } = props;
+   const [open, setOpen] = React.useState(false);
+@@ -13,6 +12,7 @@ const TransferModal = props => {
+ 
+   const formChange = key => (ev, el) => {
+     /* TODO: 加代码 */
++    setFormValue(prev => ({ ...prev, [key]: el.value }));
+   };
+ 
+   const confirmAndClose = (unsub) => {
+@@ -44,6 +44,30 @@ const TransferModal = props => {
+ };
+ 
+ // --- About Kitty Card ---
++function stringToBytes(str) {
++  const bytes = [];
++  let len, c;
++  len = str.length;
++  for(var i = 0; i < len; i++) {
++    c = str.charCodeAt(i);
++    if(c >= 0x010000 && c <= 0x10FFFF) {
++      bytes.push(((c >> 18) & 0x07) | 0xF0);
++      bytes.push(((c >> 12) & 0x3F) | 0x80);
++      bytes.push(((c >> 6) & 0x3F) | 0x80);
++      bytes.push((c & 0x3F) | 0x80);
++    } else if(c >= 0x000800 && c <= 0x00FFFF) {
++      bytes.push(((c >> 12) & 0x0F) | 0xE0);
++      bytes.push(((c >> 6) & 0x3F) | 0x80);
++      bytes.push((c & 0x3F) | 0x80);
++    } else if(c >= 0x000080 && c <= 0x0007FF) {
++      bytes.push(((c >> 6) & 0x1F) | 0xC0);
++      bytes.push((c & 0x3F) | 0x80);
++    } else {
++      bytes.push(c & 0xFF);
++    }
++  }
++  return bytes;
++}
+ 
+ const KittyCard = props => {
+   /*
+@@ -53,14 +77,40 @@ const KittyCard = props => {
+     <TransferModal kitty={kitty} accountPair={accountPair} setStatus={setStatus}/> - 来作转让的弹出层
+     ```
+   */
+-  return null;
++  const { kitty, owner, price, accountPair, setStatus } = props;
++  const {dna} = kitty;
++  const dna_str = dna.toString();
++  const dna_arr = stringToBytes(dna_str);
++  const owner_str = "" + owner;
++  const price_str = "" + price;
++
++  let description = "";
++  if (accountPair.address === owner_str) {
++    description += "Belongs to me";
++  }
++  if (price_str != "") {
++    description += " & for sale: " + price;
++  }
++
++  return <Grid.Column width={4}>
++    <Card>
++      <Card.Content>
++        <Card.Header>{kitty.id}</Card.Header>
++        <KittyAvatar dna={dna_str} />
++        <TransferModal kitty={kitty} accountPair={accountPair} setStatus={setStatus}/>
++        <Card.Description> {description} </Card.Description>
++      </Card.Content>
++    </Card>
++  </Grid.Column>;
+ };
+ 
+ const KittyCards = props => {
+-  const { kitties, accountPair, setStatus } = props;
++  const { kitties, kittyOwners, kittyPrices, accountPair, setStatus } = props;
+ 
+   /* TODO: 加代码。这里会枚举所有的 `KittyCard` */
+-  return null;
++  return <Grid>
++    {kitties.map((kitty, index) => <KittyCard key={index} kitty={kitty} owner={kittyOwners[index]} price={kittyPrices[index]} accountPair={accountPair} setStatus={setStatus}/>)}
++  </Grid>;
+ };
+ 
+ export default KittyCards;
